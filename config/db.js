@@ -7,6 +7,13 @@ const pool = mysql.createPool({
     database: 'crud'
 });
 
+// const pool = mysql.createPool({
+//     host: '34.226.136.144',
+//     user: 'rahul',
+//     password: 'taj123W',
+//     database: 'crud'
+// });
+
 const promisePool = pool.promise();
 
 module.exports = promisePool;

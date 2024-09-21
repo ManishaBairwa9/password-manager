@@ -1,73 +1,113 @@
-const express = require('express');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const db = require('../config/db');
-const checkIpAddress = require('../middlewares/checkIpAddress'); // Import the middleware
-
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const db = require("../config/db");
+const checkIpAddress = require("../middlewares/checkIpAddress");
+const ApiResponse = require("../utils/ApiResponse");
 const router = express.Router();
-const secret = 'goldenheart';  // Use a secure key management in production
+const crypto = require("crypto");
 
-const crypto = require('crypto');
+// Use environment variables for sensitive information
+const JWT_SECRET = process.env.JWT_SECRET || "goldenheart"; // Fallback for development
+const JWT_EXPIRATION = "1h";
 
-// Register
-router.post('/register', async (req, res) => {
-    const { email, password } = req.body;
-    var ipAddress = ''
-    if(req.body.hasOwnProperty('ip')){
-        ipAddress = req.body.ip;
-    }else{
-        res.status(500).send('Connot proceed without IP address');
-    }
+// Error handling middleware
+const errorHandler = (err, req, res, next) => {
+  console.error(err.stack);
+  const statusCode = err.statusCode || 500;
+  const message = err.message || "Internal Server Error";
+  ApiResponse.error(message, statusCode).send(res);
+};
+
+// Utility function to generate random key
+const generateRandomKey = () => crypto.randomBytes(16).toString("hex");
+
+// Utility function to hash password
+const hashPassword = async (password) => await bcrypt.hash(password, 10);
+
+// Register route
+
+router.post("/register", async (req, res, next) => {
+  const { email, password } = req.body;
+  const ipAddress = req.body.ip;
+
+  if (!ipAddress) {
+    return ApiResponse.error("Cannot proceed without IP address", 400).send(
+      res
+    );
+  }
+
+  try {
+    const hashedPassword = await hashPassword(password);
+    const conn = await db.getConnection();
 
     try {
-        // Hash the password
-        const hashedPassword = await bcrypt.hash(password, 10);
+      await conn.beginTransaction();
 
-        // Insert user into the users table
-        await db.query('INSERT INTO users (email, password) VALUES (?, ?)', [email, hashedPassword]);
+      const [userResult] = await conn.query(
+        "INSERT INTO users (email, password) VALUES (?, ?)",
+        [email, hashedPassword]
+      );
+      const userId = userResult.insertId;
 
-        // Retrieve user ID by querying the user by email
-        const [userResult] = await db.query('SELECT id FROM users WHERE email = ?', [email]);
-        const userId = userResult[0]?.id;
+      await conn.query("INSERT INTO ip_address (user_id, ip) VALUES (?, ?)", [
+        userId,
+        ipAddress,
+      ]);
 
-        if (!userId) {
-            throw new Error('User ID not found');
-        }
+      const randomKey = generateRandomKey();
+      await conn.query("INSERT INTO enkeys (user_id, `key`) VALUES (?, ?)", [
+        userId,
+        randomKey,
+      ]);
 
-        // Insert IP address into the ip_address table
-        await db.query('INSERT INTO ip_address (user_id, ip) VALUES (?, ?)', [userId, ipAddress]);
+      await conn.commit();
 
-        // Generate a random key (32 characters hex)
-        const randomKey = crypto.randomBytes(16).toString('hex'); // Generates 32 characters
-
-        // Insert the generated key into the enkeys table
-        await db.query('INSERT INTO enkeys (user_id, `key`) VALUES (?, ?)', [userId, randomKey]);
-
-        res.status(201).send('User registered');
+      ApiResponse.success("User registered successfully", { userId }, 201).send(
+        res
+      );
     } catch (error) {
-        console.error(error);
-        res.status(500).send('Error registering user');
+      await conn.rollback();
+      throw error;
+    } finally {
+      conn.release();
     }
+  } catch (error) {
+    next(error);
+  }
 });
 
+// Login route
+router.post("/login", checkIpAddress, async (req, res, next) => {
+  const { email, password } = req.body;
 
+  try {
+    const [rows] = await db.query("SELECT * FROM users WHERE email = ?", [
+      email,
+    ]);
 
-// Login with IP Address Check
-router.post('/login', checkIpAddress, async (req, res) => {
-    const { email, password} = req.body;
-    try {
-        const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
-        if (rows.length === 0) return res.status(400).send('User not found');
-        
-        const user = rows[0];
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return res.status(400).send('Invalid credentials');
-        
-        const token = jwt.sign({ id: user.id }, secret, { expiresIn: '1h' });
-        res.json({ token });
-    } catch (error) {
-        res.status(500).send('Error logging in');
+    if (rows.length === 0) {
+      return ApiResponse.error("User not found", 404).send(res);
     }
+
+    const user = rows[0];
+    const isMatch = await bcrypt.compare(password, user.password);
+
+    if (!isMatch) {
+      return ApiResponse.error("Invalid credentials", 401).send(res);
+    }
+
+    const token = jwt.sign({ id: user.id }, JWT_SECRET, {
+      expiresIn: JWT_EXPIRATION,
+    });
+
+    ApiResponse.success("Login successful", { token }).send(res);
+  } catch (error) {
+    next(error);
+  }
 });
+
+// Apply error handling middleware
+router.use(errorHandler);
 
 module.exports = router;

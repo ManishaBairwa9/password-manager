@@ -1,98 +1,97 @@
 const express = require('express');
 const db = require('../config/db');
+const ApiResponse = require('../utils/ApiResponse');
+const authenticateToken = require('../middlewares/authenticateToken');
 
 const router = express.Router();
-const authenticateToken = require('../middlewares/authenticateToken'); // Import the middleware
+
+// Error handling middleware
+const errorHandler = (err, req, res, next) => {
+  console.error('Error:', err);
+  ApiResponse.error(err.message || 'Internal server error', err.statusCode || 500).send(res);
+};
 
 // Insert IP Address
-router.post('/',authenticateToken, async (req, res) => {
-    const { ip } = req.body;
-    const user_id = req.user.id;
+router.post('/', authenticateToken, async (req, res, next) => {
+  const { ip } = req.body;
+  const user_id = req.user.id;
 
-    try {
-        await db.query('INSERT INTO ip_address (ip, user_id) VALUES (?, ?)', [ip, user_id]);
-        res.status(201).send('IP address added successfully');
-    } catch (error) {
-        res.status(500).send('Error inserting IP address');
-    }
+  try {
+    await db.query('INSERT INTO ip_address (ip, user_id) VALUES (?, ?)', [ip, user_id]);
+    ApiResponse.success('IP address added successfully', null, 201).send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Delete IP Address
-router.delete('/:id',authenticateToken, async (req, res) => {
-    const { id } = req.params;
+router.delete('/:id', authenticateToken, async (req, res, next) => {
+  const { id } = req.params;
+  const user_id = req.user.id;
 
-    try {
-        const result = await db.query('DELETE FROM ip_address WHERE id = ?', [id]);
-        if (result.affectedRows === 0) {
-            return res.status(404).send('IP address not found');
-        }
-        res.send('IP address deleted successfully');
-    } catch (error) {
-        res.status(500).send('Error deleting IP address');
+  try {
+    const [result] = await db.query('DELETE FROM ip_address WHERE id = ? AND user_id = ?', [id, user_id]);
+    if (result.affectedRows === 0) {
+      return ApiResponse.error('IP address not found or unauthorized', 404).send(res);
     }
+    ApiResponse.success('IP address deleted successfully').send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
 // Get IP Addresses for a User
-router.get('/',authenticateToken, async (req, res) => {
-    const user_id = req.user.id;
+router.get('/', authenticateToken, async (req, res, next) => {
+  const user_id = req.user.id;
 
-    try {
-        const [rows] = await db.query('SELECT * FROM ip_address WHERE user_id = ?', [user_id]);
-        if (rows.length === 0) {
-            return res.send([]);
-        }
-
-        res.json(rows);
-    } catch (error) {
-        res.status(500).send('Error fetching IP addresses');
-    }
+  try {
+    const [rows] = await db.query('SELECT * FROM ip_address WHERE user_id = ?', [user_id]);
+    ApiResponse.success('IP addresses retrieved successfully', rows).send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
+// Update IP check status
+router.post('/ipcheck', authenticateToken, async (req, res, next) => {
+  const user_id = req.user.id;
+  const { check } = req.body;
 
-router.post('/ipcheck', authenticateToken, async (req, res) => {
-    const user_id = req.user.id;
-    const { check } = req.body;
+  if (check !== 0 && check !== 1) {
+    return ApiResponse.error('Invalid value for check. Must be 0 or 1.', 400).send(res);
+  }
 
-    // Check if the 'check' value is valid (must be either 0 or 1)
-    if (check !== 0 && check !== 1) {
-        return res.status(400).json({ message: 'Invalid value for check. Must be 0 or 1.' });
+  try {
+    const [result] = await db.query('UPDATE users SET `ipchecks` = ? WHERE id = ?', [check, user_id]);
+
+    if (result.affectedRows === 0) {
+      return ApiResponse.error('User not found', 404).send(res);
     }
 
-    try {
-        // Use backticks around 'check' to avoid SQL syntax errors
-        const [result] = await db.query('UPDATE users SET `ipchecks` = ? WHERE id = ?', [check, user_id]);
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ message: 'User not found.' });
-        }
-
-        res.json({ message: 'Check value updated successfully.' });
-    } catch (error) {
-        console.error('Error updating check value:', error);
-        res.status(500).json({ message: 'Error updating check value.' });
-    }
+    ApiResponse.success('Check value updated successfully').send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
+// Get IP check status
+router.get('/ipcheck', authenticateToken, async (req, res, next) => {
+  const user_id = req.user.id;
 
-router.get('/ipcheck', authenticateToken, async (req, res) => {
-    const user_id = req.user.id;
+  try {
+    const [rows] = await db.query('SELECT `ipchecks` FROM users WHERE id = ?', [user_id]);
 
-    try {
-        // Query the database to get the 'ipchecks' value for the user
-        const [rows] = await db.query('SELECT `ipchecks` FROM users WHERE id = ?', [user_id]);
-
-        // Check if the user exists
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'User not found.' });
-        }
-
-        // Return the 'ipchecks' value
-        res.json({ check: rows[0].ipchecks });
-    } catch (error) {
-        console.error('Error fetching IP check value:', error);
-        res.status(500).json({ message: 'Error fetching IP check value.' });
+    if (rows.length === 0) {
+      return ApiResponse.error('User not found', 404).send(res);
     }
+
+    ApiResponse.success('IP check value retrieved successfully', { check: rows[0].ipchecks }).send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
+// Apply error handling middleware
+router.use(errorHandler);
 
 module.exports = router;

@@ -1,22 +1,42 @@
 const jwt = require('jsonwebtoken');
-const secret = 'goldenheart'; // Use a secure key management in production
+const ApiResponse = require('../utils/ApiResponse');
 
-// Middleware to verify token
+// Use environment variables for sensitive information
+const JWT_SECRET = process.env.JWT_SECRET || 'goldenheart'; // Fallback for development
+
+/**
+ * Middleware to authenticate and verify JWT tokens
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
+ * @param {Function} next - Express next middleware function
+ */
 const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Extract the token from the Authorization header
-    
-    if (token == null) {
-        return res.sendStatus(401); // If no token, return Unauthorized status
+  const authHeader = req.headers['authorization'];
+
+  if (!authHeader) {
+    return ApiResponse.error('No authorization header provided', 401).send(res);
+  }
+
+  const [bearer, token] = authHeader.split(' ');
+
+  if (bearer !== 'Bearer' || !token) {
+    return ApiResponse.error('Invalid authorization header format', 401).send(res);
+  }
+
+  try {
+    const decodedToken = jwt.verify(token, JWT_SECRET);
+    req.user = decodedToken;
+    next();
+  } catch (error) {
+    if (error instanceof jwt.TokenExpiredError) {
+      return ApiResponse.error('Token has expired', 401).send(res);
+    } else if (error instanceof jwt.JsonWebTokenError) {
+      return ApiResponse.error('Invalid token', 403).send(res);
+    } else {
+      console.error('JWT verification error:', error);
+      return ApiResponse.error('Failed to authenticate token', 500).send(res);
     }
-    
-    jwt.verify(token, secret, (err, user) => {
-        if (err) {
-            return res.sendStatus(403); // If token is invalid, return Forbidden status
-        }
-        req.user = user; // Attach the decoded token to req.user
-        next(); // Call next to proceed to the next middleware/route handler
-    });
+  }
 };
 
-module.exports = authenticateToken; // Export the middleware
+module.exports = authenticateToken;

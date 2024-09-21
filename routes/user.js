@@ -1,46 +1,102 @@
 const express = require('express');
 const db = require('../config/db');
-const authenticateToken = require('../middlewares/authenticateToken'); // Authentication middleware
-const checkAdmin = require('../middlewares/checkAdmin'); // Import the admin check middleware
+const ApiResponse = require('../utils/ApiResponse');
+const authenticateToken = require('../middlewares/authenticateToken');
+const checkAdmin = require('../middlewares/checkAdmin');
 
 const router = express.Router();
 
+// Error handling middleware
+const errorHandler = (err, req, res, next) => {
+  console.error('Error:', err);
+  ApiResponse.error(err.message || 'Internal server error', err.statusCode || 500).send(res);
+};
+
 // Delete a user (Admin Only)
-router.delete('/:id', authenticateToken, checkAdmin, async (req, res) => {
-    const { id } = req.params;
+router.delete('/:id', authenticateToken, checkAdmin, async (req, res, next) => {
+  const { id } = req.params;
 
-    try {
-        const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
-        if (rows.length === 0) return res.status(404).send('User not found');
-
-        await db.query('DELETE FROM users WHERE id = ?', [id]);
-        res.send('User deleted successfully');
-    } catch (error) {
-        res.status(500).send('Error deleting user');
+  try {
+    const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+    if (rows.length === 0) {
+      return ApiResponse.error('User not found', 404).send(res);
     }
+
+    await db.query('DELETE FROM users WHERE id = ?', [id]);
+    ApiResponse.success('User deleted successfully').send(res);
+  } catch (error) {
+    next(error);
+  }
 });
 
-// Get users with pagination(Admin Only)
-router.get('', authenticateToken, checkAdmin, async (req, res) => {
-    const { page = 1, limit = 10 } = req.query; // Default to page 1 and limit 10 if not specified
+// Get users with pagination (Admin Only)
+router.get('', authenticateToken, checkAdmin, async (req, res, next) => {
+  const { page = 1, limit = 10 } = req.query;
 
-    // Convert to integers
-    const pageNumber = parseInt(page, 10);
-    const pageSize = parseInt(limit, 10);
+  const pageNumber = parseInt(page, 10);
+  const pageSize = parseInt(limit, 10);
 
-    if (isNaN(pageNumber) || pageNumber < 1 || isNaN(pageSize) || pageSize < 1) {
-        return res.status(400).send('Invalid pagination parameters');
-    }
+  if (isNaN(pageNumber) || pageNumber < 1 || isNaN(pageSize) || pageSize < 1) {
+    return ApiResponse.error('Invalid pagination parameters', 400).send(res);
+  }
 
-    const offset = (pageNumber - 1) * pageSize;
+  const offset = (pageNumber - 1) * pageSize;
 
-    try {
-        // Get paginated users
-        const [rows] = await db.query('SELECT id, email FROM users LIMIT ? OFFSET ?', [pageSize, offset]);
-        res.json(rows);
-    } catch (error) {
-        res.status(500).send('Error retrieving users');
-    }
+  try {
+    // Get paginated users
+    const [rows] = await db.query('SELECT id, email FROM users LIMIT ? OFFSET ?', [pageSize, offset]);
+    
+    // Get total count of users
+    const [countResult] = await db.query('SELECT COUNT(*) as total FROM users');
+    const totalUsers = countResult[0].total;
+    
+    const totalPages = Math.ceil(totalUsers / pageSize);
+
+    ApiResponse.success('Users retrieved successfully', {
+      users: rows,
+      pagination: {
+        currentPage: pageNumber,
+        pageSize: pageSize,
+        totalUsers: totalUsers,
+        totalPages: totalPages
+      }
+    }).send(res);
+  } catch (error) {
+    next(error);
+  }
 });
+
+//user only
+router.delete('/myaccount/delete', authenticateToken, async (req, res, next) => {
+    const id = req.user.id;
+  
+    try {
+      const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+  
+      if (rows.length === 0) {
+        return ApiResponse.error('User not found', 404).send(res);
+      }
+  
+      // Delete from ip_address table
+      await db.query('DELETE FROM ip_address WHERE user_id = ?', [id]);
+  
+      // Delete from credentials table
+      await db.query('DELETE FROM credentials WHERE user_id = ?', [id]);
+  
+      // Delete from enkeys table
+      await db.query('DELETE FROM enkeys WHERE user_id = ?', [id]);
+  
+      // Delete from users table
+      await db.query('DELETE FROM users WHERE id = ?', [id]);
+  
+      ApiResponse.success('User and related data deleted successfully').send(res);
+    } catch (error) {
+      next(error);
+    }
+  });
+  
+
+// Apply error handling middleware
+router.use(errorHandler);
 
 module.exports = router;
