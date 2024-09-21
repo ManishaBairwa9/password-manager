@@ -3,7 +3,7 @@ const db = require('../config/db');
 const ApiResponse = require('../utils/ApiResponse');
 const authenticateToken = require('../middlewares/authenticateToken');
 const checkAdmin = require('../middlewares/checkAdmin');
-const bcrypt = require('bcrypt');
+const bcrypt = require("bcryptjs");
 
 const router = express.Router();
 
@@ -137,7 +137,7 @@ router.put('/myaccount/password', authenticateToken, async (req, res, next) => {
             return ApiResponse.error('Current password is incorrect', 401).send(res);
         }
 
-        // Hash the new password
+        // Hash the new password using bcryptjs
         const hashedNewPassword = await bcrypt.hash(newPassword, 10);
 
         // Update the user's password in the database
@@ -148,6 +148,7 @@ router.put('/myaccount/password', authenticateToken, async (req, res, next) => {
         next(error);
     }
 });
+
 
 
   
