@@ -3,6 +3,7 @@ const db = require('../config/db');
 const ApiResponse = require('../utils/ApiResponse');
 const authenticateToken = require('../middlewares/authenticateToken');
 const checkAdmin = require('../middlewares/checkAdmin');
+const bcrypt = require('bcrypt');
 
 const router = express.Router();
 
@@ -94,6 +95,61 @@ router.delete('/myaccount/delete', authenticateToken, async (req, res, next) => 
       next(error);
     }
   });
+
+
+// Fetch user details
+router.get('/myaccount', authenticateToken, async (req, res, next) => {
+    const id = req.user.id;
+
+    try {
+        const [rows] = await db.query('SELECT * FROM users WHERE id = ?', [id]);
+
+        if (rows.length === 0) {
+            return ApiResponse.error('User not found', 404).send(res);
+        }
+
+        const user = rows[0];
+        ApiResponse.success('User fetched successfully', user).send(res);
+    } catch (error) {
+        next(error);
+    }
+});
+
+
+// Change password
+router.put('/myaccount/password', authenticateToken, async (req, res, next) => {
+    const id = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    try {
+        // Fetch the user's current password from the database
+        const [rows] = await db.query('SELECT password FROM users WHERE id = ?', [id]);
+
+        if (rows.length === 0) {
+            return ApiResponse.error('User not found', 404).send(res);
+        }
+
+        const user = rows[0];
+
+        // Compare currentPassword with the stored hashed password
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+            return ApiResponse.error('Current password is incorrect', 401).send(res);
+        }
+
+        // Hash the new password
+        const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+
+        // Update the user's password in the database
+        await db.query('UPDATE users SET password = ? WHERE id = ?', [hashedNewPassword, id]);
+
+        ApiResponse.success('Password updated successfully').send(res);
+    } catch (error) {
+        next(error);
+    }
+});
+
+
   
 
 // Apply error handling middleware
