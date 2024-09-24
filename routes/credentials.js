@@ -40,12 +40,23 @@ router.get('/', authenticateToken, async (req, res, next) => {
   try {
     const [rows] = await db.query('SELECT * FROM credentials WHERE user_id = ?', [userId]);
 
-    const decryptedRows = await Promise.all(rows.map(async (row) => ({
-      id: row.id,
-      name: await decrypt(row.name, userId),
-      link: await decrypt(row.link, userId),
-      password: await decrypt(row.password, userId)
-    })));
+    const decryptedRows = await Promise.all(rows.map(async (row) => {
+        try {
+          return {
+            id: row.id,
+            name: await decrypt(row.name, userId).catch(() => null), // if decryption fails, set to null
+            link: await decrypt(row.link, userId).catch(() => null),
+            password: await decrypt(row.password, userId).catch(() => null)
+          };
+        } catch (error) {
+          console.error('Error decrypting row:', row.id, error);
+          return null; // or handle as you prefer
+        }
+      }));
+      
+      // Filter out null values (failed decryption rows) if needed
+      const filteredRows = decryptedRows.filter(row => row !== null);
+      
 
     ApiResponse.success('Credentials retrieved successfully', decryptedRows).send(res);
   } catch (error) {

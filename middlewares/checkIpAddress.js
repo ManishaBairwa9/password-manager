@@ -9,7 +9,7 @@ const ApiResponse = require('../utils/ApiResponse');
  */
 const checkIpAddress = async (req, res, next) => {
   const { email } = req.body;
-  const userIp = req.ip || req.connection.remoteAddress; // Get the user's IP address from request
+  const userIp = req.body.ip; // Get the user's IP address from request
 
   if (!email) {
     return ApiResponse.error('Email is required', 400).send(res);
